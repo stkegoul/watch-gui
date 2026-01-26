@@ -1,0 +1,139 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Blnk Watch Script",
+  "scopeName": "source.blnkwatch",
+  "patterns": [
+    {
+      "include": "#comments"
+    },
+    {
+      "include": "#keywords"
+    },
+    {
+      "include": "#strings"
+    },
+    {
+      "include": "#numbers"
+    },
+    {
+      "include": "#operators"
+    },
+    {
+      "include": "#functions"
+    },
+    {
+      "include": "#variables"
+    },
+    {
+      "include": "#punctuation"
+    },
+    {
+      "include": "#entities"
+    }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.double-slash.blnkwatch",
+          "match": "//.*"
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.blnkwatch",
+          "match": "\\b(rule|when|then)\\b"
+        },
+        {
+          "name": "keyword.other.blnkwatch",
+          "match": "\\b(description|score|reason)\\b"
+        },
+        {
+          "name": "constant.language.verdict.blnkwatch",
+          "match": "\\b(review|allow|block)\\b"
+        }
+      ]
+    },
+    "strings": {
+      "name": "string.quoted.double.blnkwatch",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {
+          "name": "constant.character.escape.blnkwatch",
+          "match": "\\\\."
+        }
+      ]
+    },
+    "numbers": {
+      "name": "constant.numeric.blnkwatch",
+      "match": "\\b[0-9]+(\\.[0-9]+)?\\b"
+    },
+    "operators": {
+      "name": "keyword.operator.blnkwatch",
+      "match": "(==|!=|>|<|>=|<=|eq|ne|gt|gte|lt|lte|in|not_in|regex|not_regex)"
+    },
+    "functions": {
+      "patterns": [
+        {
+          "match": "\\b(count|sum|avg|max|min|hour_of_day|day_of_week|day_of_month|day_of_year|month_of_year|week_of_year|year|previous_transaction)(?=\\()",
+          "name": "entity.name.function.blnkwatch"
+        }
+      ]
+    },
+    "variables": {
+      "patterns": [
+        {
+          "name": "variable.language.blnkwatch",
+          "match": "\\$current\\b(\\.[a-zA-Z_][\\w]*)*"
+        },
+        {
+          "name": "variable.language.blnkwatch",
+          "match": "\\bmetadata\\b(\\.[a-zA-Z_][\\w]*)*"
+        },
+        {
+          "name": "variable.language.transaction.blnkwatch",
+          "match": "\\b(amount|reference|timestamp|description|currency)\\b"
+        },
+        {
+          "name": "variable.other.blnkwatch",
+          "match": "\\b[a-zA-Z_][\\w]*(\\.[a-zA-Z_][\\w]*)*\\b"
+        }
+      ]
+    },
+    "punctuation": {
+      "patterns": [
+        {
+          "name": "punctuation.definition.block.begin.blnkwatch",
+          "match": "\\{"
+        },
+        {
+          "name": "punctuation.definition.block.end.blnkwatch",
+          "match": "\\}"
+        },
+        {
+          "name": "punctuation.definition.parameters.begin.blnkwatch",
+          "match": "\\("
+        },
+        {
+          "name": "punctuation.definition.parameters.end.blnkwatch",
+          "match": "\\)"
+        },
+        {
+          "name": "punctuation.separator.comma.blnkwatch",
+          "match": ","
+        }
+      ]
+    },
+    "entities": {
+      "patterns": [
+        {
+          "match": "(?<=rule\\s+)([a-zA-Z_][\\w]*)",
+          "name": "entity.name.type.rule.blnkwatch"
+        }
+      ]
+    }
+  }
+}

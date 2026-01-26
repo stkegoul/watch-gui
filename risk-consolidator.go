@@ -1,0 +1,324 @@
+/*
+Copyright 2024 Blnk Finance Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package watch
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"log"
+	"net/http"
+	"os"
+	"strings"
+	"time"
+)
+
+type ConsolidatedRiskAssessment struct {
+	FinalRiskScore float64 `json:"final_risk_score"`
+	FinalVerdict   string  `json:"final_verdict"`
+	FinalReason    string  `json:"final_reason"`
+	SourceCount    int     `json:"source_count"`
+}
+
+type RiskConsolidatorSkill struct {
+}
+
+type CloudAnomalyRequest struct {
+	Description string `json:"description"`
+	RiskLevel   string `json:"risk_level"`
+}
+
+type CloudAnomalyResponse struct {
+	Success   bool   `json:"success"`
+	Message   string `json:"message"`
+	AnomalyID string `json:"anomaly_id,omitempty"`
+}
+
+func (s *RiskConsolidatorSkill) Name() string {
+	return "RiskConsolidatorSkill"
+}
+
+func (s *RiskConsolidatorSkill) flagAnomalyViaWebSocket(t Transaction, assessment ConsolidatedRiskAssessment) error {
+	description := assessment.FinalReason
+	if description == "" {
+		description = "Risk assessment flagged transaction"
+	}
+
+	// Map risk score to risk level
+	riskLevel := "medium"
+	if assessment.FinalRiskScore >= 0.8 {
+		riskLevel = "high"
+	} else if assessment.FinalRiskScore >= 0.6 {
+		riskLevel = "medium"
+	} else if assessment.FinalRiskScore >= 0.3 {
+		riskLevel = "low"
+	} else {
+		riskLevel = "very_low"
+	}
+
+	additionalData := make(map[string]interface{})
+	if t.MetaData != nil {
+		additionalData["original_metadata"] = t.MetaData
+	}
+	additionalData["transaction_amount"] = t.Amount
+	additionalData["transaction_reference"] = t.Reference
+	additionalData["source_ledger"] = t.Source
+	additionalData["destination_ledger"] = t.Destination
+
+	anomaly := AnomalyMessage{
+		Type:           "anomaly",
+		TransactionID:  t.TransactionID,
+		Description:    description,
+		RiskLevel:      riskLevel,
+		RiskScore:      assessment.FinalRiskScore,
+		Verdict:        assessment.FinalVerdict,
+		Reason:         assessment.FinalReason,
+		SourceCount:    assessment.SourceCount,
+		Timestamp:      time.Now().Format(time.RFC3339),
+		AdditionalData: additionalData,
+	}
+
+	if err := SendAnomalyToTunnel(anomaly); err != nil {
+		return fmt.Errorf("failed to send anomaly via WebSocket: %w", err)
+	}
+
+	if t.MetaData == nil {
+		t.MetaData = make(map[string]interface{})
+	}
+	t.MetaData["websocket_anomaly_flagged"] = true
+	t.MetaData["websocket_anomaly_timestamp"] = time.Now()
+	t.MetaData["websocket_anomaly_description"] = description
+	t.MetaData["websocket_anomaly_risk_level"] = riskLevel
+
+	return nil
+}
+
+func (s *RiskConsolidatorSkill) flagAnomalyToCloud(t Transaction, assessment ConsolidatedRiskAssessment) error {
+	baseURLs := []string{}
+
+	if primaryURL := os.Getenv("CLOUD_ANOMALY_PRIMARY_URL"); primaryURL != "" {
+		baseURLs = append(baseURLs, primaryURL)
+	}
+
+	if secondaryURL := os.Getenv("CLOUD_ANOMALY_SECONDARY_URL"); secondaryURL != "" {
+		baseURLs = append(baseURLs, secondaryURL)
+	}
+
+	if backupURL := os.Getenv("CLOUD_ANOMALY_BACKUP_URL"); backupURL != "" {
+		baseURLs = append(baseURLs, backupURL)
+	}
+
+	if len(baseURLs) == 0 {
+		log.Printf("No cloud URLs configured for anomaly flagging. Skipping cloud notification.")
+		return nil
+	}
+
+	description := assessment.FinalReason
+	if description == "" {
+		description = "Risk assessment flagged transaction"
+	}
+
+	// Map risk score to risk level
+	riskLevel := "medium"
+	if assessment.FinalRiskScore >= 0.8 {
+		riskLevel = "high"
+	} else if assessment.FinalRiskScore >= 0.6 {
+		riskLevel = "medium"
+	} else if assessment.FinalRiskScore >= 0.3 {
+		riskLevel = "low"
+	} else {
+		riskLevel = "very_low"
+	}
+
+	request := CloudAnomalyRequest{
+		Description: description,
+		RiskLevel:   riskLevel,
+	}
+
+	jsonData, err := json.Marshal(request)
+	if err != nil {
+		return fmt.Errorf("failed to marshal anomaly request: %w", err)
+	}
+
+	// Create HTTP client with timeout
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+	}
+
+	var lastError error
+	for i, baseURL := range baseURLs {
+		fullURL := fmt.Sprintf("%s/flag/%s", strings.TrimSuffix(baseURL, "/"), t.TransactionID)
+		log.Printf("Attempting to flag anomaly to cloud URL %d/%d: %s", i+1, len(baseURLs), fullURL)
+
+		req, err := http.NewRequest("POST", fullURL, bytes.NewBuffer(jsonData))
+		if err != nil {
+			lastError = fmt.Errorf("failed to create request for URL %s: %w", fullURL, err)
+			log.Printf("Error creating request for %s: %v", fullURL, err)
+			continue
+		}
+
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("User-Agent", "BlnkWatch-RiskConsolidator/1.0")
+
+		if apiKey := os.Getenv("CLOUD_ANOMALY_API_KEY"); apiKey != "" {
+			req.Header.Set("Authorization", "Bearer "+apiKey)
+		}
+
+		resp, err := client.Do(req)
+		if err != nil {
+			lastError = fmt.Errorf("failed to send request to %s: %w", fullURL, err)
+			log.Printf("Error sending request to %s: %v", fullURL, err)
+			continue
+		}
+
+		var response CloudAnomalyResponse
+		if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+			resp.Body.Close()
+			lastError = fmt.Errorf("failed to decode response from %s: %w", fullURL, err)
+			log.Printf("Error decoding response from %s: %v", fullURL, err)
+			continue
+		}
+		resp.Body.Close()
+
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			log.Printf("Successfully flagged anomaly to cloud URL %s. Status: %d", fullURL, resp.StatusCode)
+
+			if t.MetaData == nil {
+				t.MetaData = make(map[string]interface{})
+			}
+			t.MetaData["cloud_anomaly_flagged"] = true
+			t.MetaData["cloud_anomaly_url"] = fullURL
+			t.MetaData["cloud_anomaly_timestamp"] = time.Now()
+			t.MetaData["cloud_anomaly_description"] = request.Description
+			t.MetaData["cloud_anomaly_risk_level"] = request.RiskLevel
+
+			return nil
+		} else {
+			lastError = fmt.Errorf("cloud URL %s returned error: status=%d", fullURL, resp.StatusCode)
+			log.Printf("Cloud URL %s returned error: status=%d", fullURL, resp.StatusCode)
+		}
+	}
+
+	return fmt.Errorf("failed to flag anomaly to any cloud URL. Last error: %w", lastError)
+}
+
+func (s *RiskConsolidatorSkill) Execute(t Transaction) error {
+	if t.MetaData == nil {
+		t.MetaData = make(map[string]interface{})
+	}
+
+	var allReasons []string
+	var totalScore float64
+	var scoreCount int
+
+	if dslVerdictsVal, ok := t.MetaData["dsl_verdicts"]; ok {
+		if dslVerdictsMap, ok := dslVerdictsVal.([]RiskVerdict); ok {
+			for _, verdictMap := range dslVerdictsMap {
+				score := verdictMap.Score
+				reason := verdictMap.Reason
+
+				totalScore += score
+				scoreCount++
+				allReasons = append(allReasons, reason)
+			}
+		} else {
+			log.Printf("Warning: 'dsl_verdicts' key found in metadata for tx %d, but type is %T, not []map[string]any. Skipping.", t.ID, dslVerdictsVal)
+		}
+	}
+
+	if scoreCount == 0 {
+
+		t.MetaData["consolidated_risk_assessment"] = ConsolidatedRiskAssessment{
+			FinalRiskScore: 0.0,
+			FinalVerdict:   "Indeterminate",
+			FinalReason:    "No risk information found to consolidate.",
+			SourceCount:    0,
+		}
+		return nil
+	}
+
+	finalRiskScore := totalScore / float64(scoreCount)
+	if finalRiskScore < 0 {
+		finalRiskScore = 0
+	}
+	if finalRiskScore > 1 {
+		finalRiskScore = 1
+	}
+
+	finalVerdict := "review"
+	if finalRiskScore >= 0.7 {
+		finalVerdict = "block"
+	}
+
+	assessment := ConsolidatedRiskAssessment{
+		FinalRiskScore: finalRiskScore,
+		FinalVerdict:   finalVerdict,
+		FinalReason:    strings.Join(allReasons, "; "),
+		SourceCount:    scoreCount,
+	}
+
+	t.MetaData["consolidated_risk_assessment"] = assessment
+
+	shouldFlagToCloud := false
+
+	riskThreshold := 0.5
+	if thresholdStr := os.Getenv("CLOUD_ANOMALY_RISK_THRESHOLD"); thresholdStr != "" {
+		if threshold, err := fmt.Sscanf(thresholdStr, "%f", &riskThreshold); err == nil && threshold == 1 {
+		} else {
+			log.Printf("Warning: Invalid CLOUD_ANOMALY_RISK_THRESHOLD value '%s', using default 0.5", thresholdStr)
+		}
+	}
+
+	if assessment.FinalRiskScore >= riskThreshold {
+		shouldFlagToCloud = true
+	}
+
+	if assessment.FinalVerdict == "block" || assessment.FinalVerdict == "review" {
+		shouldFlagToCloud = true
+	}
+
+	if cloudFlaggingEnabled := os.Getenv("CLOUD_ANOMALY_ENABLED"); cloudFlaggingEnabled == "false" {
+		shouldFlagToCloud = false
+		log.Printf("Cloud anomaly flagging is disabled via CLOUD_ANOMALY_ENABLED=false")
+	}
+
+	if shouldFlagToCloud {
+		websocketErr := s.flagAnomalyViaWebSocket(t, assessment)
+		if websocketErr == nil {
+			log.Printf("Successfully flagged anomaly for transaction %s", t.TransactionID)
+		} else {
+			log.Printf("WebSocket anomaly flagging failed for transaction %s: %v", t.TransactionID, websocketErr)
+
+			if cloudErr := s.flagAnomalyToCloud(t, assessment); cloudErr != nil {
+				log.Printf("Warning: Both WebSocket and cloud anomaly flagging failed for transaction %s. WebSocket: %v, Cloud: %v",
+					t.TransactionID, websocketErr, cloudErr)
+
+				t.MetaData["websocket_anomaly_error"] = websocketErr.Error()
+				t.MetaData["websocket_anomaly_error_timestamp"] = time.Now()
+				t.MetaData["cloud_anomaly_error"] = cloudErr.Error()
+				t.MetaData["cloud_anomaly_error_timestamp"] = time.Now()
+			} else {
+				log.Printf("Successfully flagged anomaly to cloud after WebSocket failure for transaction %s", t.TransactionID)
+			}
+		}
+	} else {
+		log.Printf("Anomaly for transaction %s does not meet flagging criteria (Score: %.2f, Verdict: %s)",
+			t.TransactionID, assessment.FinalRiskScore, assessment.FinalVerdict)
+	}
+
+	return nil
+}

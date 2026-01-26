@@ -1,0 +1,43 @@
+{
+  "name": "blnk-watch-language",
+  "displayName": "Blnk Watch Language Support",
+  "description": "Syntax highlighting for Blnk Watch (.ws) files.",
+  "version": "0.0.1",
+  "publisher": "your-publisher-name",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-username/blnk-watch-language"
+  },
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "blnkwatch",
+        "aliases": [
+          "Blnk Watch Script",
+          "blnkwatch"
+        ],
+        "extensions": [
+          ".ws"
+        ],
+        "configuration": "./blnkwatch.language-configuration.json",
+        "icon": {
+          "light": "./icons/watch-light.png",
+          "dark": "./icons/watch-dark.png"
+        }
+      }
+    ],
+    "grammars": [
+      {
+        "language": "blnkwatch",
+        "scopeName": "source.blnkwatch",
+        "path": "./blnkwatch.tmLanguage.json"
+      }
+    ]
+  }
+}

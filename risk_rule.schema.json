@@ -1,0 +1,238 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://blnkfinance.com/schemas/risk_rule.schema.json",
+  "title": "Blnk Watch Risk Rule DSL",
+  "description": "Declarative rule language compiled from plain English instructions.",
+  "type": "object",
+  "required": ["when", "then"],
+  "additionalProperties": false,
+
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Optional human/DB identifier (if you want idempotent writes)."
+    },
+
+    "when": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "oneOf": [
+          { "$ref": "#/$defs/simpleCondition" },
+          { "$ref": "#/$defs/aggregateCondition" },
+          { "$ref": "#/$defs/previousTransactionCondition" }
+        ]
+      },
+      "description": "All conditions must be true (logical AND)."
+    },
+
+    "then": {
+      "$ref": "#/$defs/action"
+    }
+  },
+
+  "$defs": {
+    "fieldPath": {
+      "type": "string",
+      "pattern": "^([a-zA-Z_][\\w]*)(\\.[a-zA-Z_][\\w]*)*$",
+      "description": "Dot‑separated path into the transaction JSON, e.g. 'metadata.mcc'."
+    },
+
+    "verdict": {
+      "type": "string",
+      "enum": ["allow", "block", "review"]
+    },
+
+    "scalarOperator": {
+      "type": "string",
+      "enum": ["eq", "ne", "gt", "gte", "lt", "lte"]
+    },
+
+    "listOperator": {
+      "type": "string",
+      "enum": ["in", "not_in"]
+    },
+
+    "aggregateMetric": {
+      "type": "string",
+      "enum": ["count", "sum", "avg", "max", "min"]
+    },
+
+    "isoDuration": {
+      "type": "string",
+      "pattern": "^P(T(?:\\d+H)?(?:\\d+M)?(?:\\d+S)?|\\d+D)$",
+      "description": "ISO‑8601 duration such as 'PT30M', 'PT24H', 'P7D'."
+    },
+
+    "numberOrString": {
+      "oneOf": [{ "type": "number" }, { "type": "string" }]
+    },
+
+    "action": {
+      "type": "object",
+      "required": ["verdict", "score", "reason"],
+      "additionalProperties": false,
+      "properties": {
+        "verdict": { "$ref": "#/$defs/verdict" },
+        "score": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Normalized severity score."
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Short explanation shown to analysts / logs."
+        }
+      }
+    },
+
+    "simpleCondition": {
+      "type": "object",
+      "title": "Simple field comparison",
+      "required": ["field", "op", "value"],
+      "additionalProperties": false,
+      "properties": {
+        "field": { "$ref": "#/$defs/fieldPath" },
+
+        "op": {
+          "oneOf": [
+            { "$ref": "#/$defs/scalarOperator" },
+            { "$ref": "#/$defs/listOperator" },
+            { "type": "string", "enum": ["regex", "not_regex"] }
+          ]
+        },
+
+        "value": {
+          "description": "Scalar, array or regexp‑string depending on 'op'.",
+          "oneOf": [
+            { "$ref": "#/$defs/numberOrString" },
+            {
+              "type": "array",
+              "items": { "$ref": "#/$defs/numberOrString" },
+              "minItems": 1
+            }
+          ]
+        }
+      },
+
+      "examples": [
+        {
+          "field": "amount",
+          "op": "gt",
+          "value": 5000
+        },
+        {
+          "field": "metadata.mcc",
+          "op": "in",
+          "value": ["7995", "5912"]
+        },
+        {
+          "field": "description",
+          "op": "regex",
+          "value": "(?i)gift ?card"
+        },
+        {
+          "field": "status",
+          "op": "ne",
+          "value": "completed"
+        }
+      ]
+    },
+
+    "aggregateCondition": {
+      "type": "object",
+      "title": "Time‑window aggregate over transactions",
+      "required": ["type", "metric", "time_window", "op", "value", "filter"],
+      "additionalProperties": false,
+
+      "properties": {
+        "type": {
+          "const": "aggregate",
+          "description": "Discriminator marking this as an aggregate rule."
+        },
+
+        "metric": { "$ref": "#/$defs/aggregateMetric" },
+
+        "time_window": { "$ref": "#/$defs/isoDuration" },
+
+        "op": {
+          "oneOf": [
+            { "$ref": "#/$defs/scalarOperator" },
+            { "$ref": "#/$defs/listOperator" }
+          ]
+        },
+
+        "value": { "type": "number" },
+
+        "filter": {
+          "$ref": "#/$defs/simpleCondition",
+          "description": "A *single* simple condition applied to each row BEFORE aggregation (e.g. source == $current.source)."
+        }
+      },
+
+      "examples": [
+        {
+          "type": "aggregate",
+          "metric": "count",
+          "time_window": "PT30M",
+          "op": "gt",
+          "value": 10,
+          "filter": {
+            "field": "source",
+            "op": "eq",
+            "value": "$current.source"
+          }
+        }
+      ]
+    },
+
+    "previousTransactionCondition": {
+      "type": "object",
+      "required": ["type", "time_window", "match"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["previous_transaction"],
+          "description": "Identifies this as a previous transaction condition"
+        },
+        "time_window": {
+          "$ref": "#/$defs/isoDuration",
+          "description": "Time window to look back for previous transactions"
+        },
+        "match": {
+          "type": "object",
+          "additionalProperties": {
+            "oneOf": [
+              { "type": "string" },
+              { "type": "number" },
+              { "type": "boolean" }
+            ]
+          },
+          "description": "Key-value pairs to match against previous transactions"
+        }
+      },
+      "examples": [
+        {
+          "type": "previous_transaction",
+          "time_window": "PT1H",
+          "match": {
+            "status": "failed",
+            "source": "$current.source",
+            "amount": 500000
+          }
+        },
+        {
+          "type": "previous_transaction",
+          "time_window": "P1D",
+          "match": {
+            "metadata.transaction_type": "withdrawal",
+            "destination": "$current.destination"
+          }
+        }
+      ]
+    }
+  }
+}
