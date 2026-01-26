@@ -138,7 +138,35 @@ Configure your `.env` file (see `env.example`) with:
 
 ## Quick Start: Evaluating Transactions
 
-### 1. Inject Your First Transaction
+### 1. Create the Watch Scripts Directory
+
+Create a directory to store your watch rules:
+
+```bash
+mkdir watch_scripts
+```
+
+### 2. Create Your First Watch Script
+
+Create a `.ws` file in the `watch_scripts` directory. Here's a simple rule to flag high-value transactions:
+
+```bash
+cat > watch_scripts/HighValueCheck.ws << 'EOF'
+rule HighValueCheck {
+  description "Flag transactions over $10,000 for review"
+
+  when amount > 10000
+
+  then review
+       score   0.5
+       reason  "Transaction amount exceeds $10,000"
+}
+EOF
+```
+
+See the [`examples/`](examples/) directory for more rule templates covering velocity checks, blacklists, cross-border transactions, and more.
+
+### 3. Inject Your First Transaction
 
 Send a transaction to the `/inject` endpoint for evaluation against your watch rules:
 
@@ -170,7 +198,7 @@ curl -X POST http://localhost:8081/inject \
 }
 ```
 
-### 2. Get Transaction Verdict
+### 4. Get Transaction Verdict
 
 After injecting a transaction, retrieve the full evaluation results:
 
@@ -215,7 +243,7 @@ The `metadata` field contains:
 - **`dsl_verdicts`**: Array of individual rule evaluations with `rule_id`, `verdict`, `score`, and `reason`
 - **`consolidated_risk_assessment`**: Aggregated risk assessment with `final_risk_score`, `final_verdict`, `final_reason`, and `source_count`
 
-### 3. Configure Alert Webhooks
+### 5. Configure Alert Webhooks
 
 To receive real-time alerts when transactions are flagged, configure webhooks in your `.env` file:
 
