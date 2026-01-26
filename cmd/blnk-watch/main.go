@@ -126,9 +126,6 @@ func runWatermarkSyncOnce(batchSize int) {
 	} else {
 		zlog.Info().
 			Int64("transactions_synced", status.TotalSyncedCount).
-			Int64("identities_synced", status.TotalIdentitiesSynced).
-			Int64("balances_synced", status.TotalBalancesSynced).
-			Int64("ledgers_synced", status.TotalLedgersSynced).
 			Msg("Sync completed successfully")
 	}
 

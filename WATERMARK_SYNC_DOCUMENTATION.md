@@ -4,11 +4,7 @@
 
 The **Watermark Sync** system is an incremental data synchronization mechanism that copies data from a PostgreSQL database (Blnk's main database) to a local DuckDB database. It uses a "watermark" pattern to track the last synchronized position, ensuring efficient incremental updates without re-syncing existing data.
 
-The sync system handles four types of entities:
-- **Transactions**: Payment and transaction records
-- **Identities**: User and organization records
-- **Balances**: Account balance records
-- **Ledgers**: Ledger records
+The sync system handles **Transactions** (payment and transaction records).
 
 ## Table of Contents
 
@@ -70,9 +66,9 @@ Each sync cycle follows these steps:
 │  (Source DB)    │────────▶│   (Sync Engine) │────────▶│  (Local DB)     │
 │                 │         │                  │         │                 │
 │ - transactions  │         │ - SyncConfig     │         │ - transactions  │
-│ - identity      │         │ - SyncLoop       │         │ - identity      │
-│ - balances      │         │ - Watermark      │         │ - balances      │
-│ - ledgers       │         │ - Retry Logic    │         │ - ledgers       │
+│                 │         │ - SyncLoop       │         │                 │
+│                 │         │ - Watermark      │         │                 │
+│                 │         │ - Retry Logic    │         │                 │
 └─────────────────┘         └──────────────────┘         └─────────────────┘
                                       │
                                       ▼
@@ -101,17 +97,12 @@ Each sync cycle follows these steps:
 
 ```go
 type SyncConfig struct {
-    SyncInterval time.Duration // How often to run sync (default: 1 second)
-    BatchSize    int           // Records per batch (default: 1000)
-    MaxRetries   int           // Max retry attempts (default: 3)
-    RetryDelay   time.Duration // Delay between retries (default: 30 seconds)
-    EnableSync   bool          // Enable/disable sync (default: true)
-    
-    // Custom starting timestamps for initial sync
-    TransactionStartTime time.Time // Starting point for transactions
-    IdentityStartTime    time.Time // Starting point for identities
-    BalanceStartTime     time.Time // Starting point for balances
-    LedgerStartTime      time.Time // Starting point for ledgers
+    SyncInterval         time.Duration // How often to run sync (default: 1 second)
+    BatchSize            int           // Records per batch (default: 1000)
+    MaxRetries           int           // Max retry attempts (default: 3)
+    RetryDelay           time.Duration // Delay between retries (default: 30 seconds)
+    EnableSync           bool          // Enable/disable sync (default: true)
+    TransactionStartTime time.Time     // Starting point for transactions
 }
 ```
 
@@ -132,17 +123,12 @@ config := DefaultSyncConfig()
 
 ```go
 config := &SyncConfig{
-    SyncInterval: 5 * time.Second,  // Sync every 5 seconds
-    BatchSize:    500,              // Smaller batches
-    MaxRetries:   5,                 // More retries
-    RetryDelay:   10 * time.Second,  // Shorter retry delay
-    EnableSync:   true,
-    
-    // Start syncing from a specific date
+    SyncInterval:         5 * time.Second,  // Sync every 5 seconds
+    BatchSize:            500,              // Smaller batches
+    MaxRetries:           5,                // More retries
+    RetryDelay:           10 * time.Second, // Shorter retry delay
+    EnableSync:           true,
     TransactionStartTime: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
-    IdentityStartTime:    time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
-    BalanceStartTime:     time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
-    LedgerStartTime:      time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
 }
 ```
 
@@ -226,9 +212,6 @@ if err != nil {
 }
 
 fmt.Printf("Transactions synced: %d\n", status.TotalSyncedCount)
-fmt.Printf("Identities synced: %d\n", status.TotalIdentitiesSynced)
-fmt.Printf("Balances synced: %d\n", status.TotalBalancesSynced)
-fmt.Printf("Ledgers synced: %d\n", status.TotalLedgersSynced)
 fmt.Printf("Sync status: %s\n", status.SyncStatus)
 fmt.Printf("Last transaction sync: %s\n", status.LastSyncTimestamp)
 ```
@@ -357,29 +340,10 @@ if err := syncer.ResetWatermark(); err != nil {
 
 ```go
 type SyncWatermark struct {
-    ID int `json:"id"`
-    
-    // Transaction sync fields
-    LastSyncTimestamp time.Time `json:"last_sync_timestamp"`
-    LastTransactionID string    `json:"last_transaction_id,omitempty"`
-    TotalSyncedCount  int64     `json:"total_synced_count"`
-    
-    // Identity sync fields
-    LastIdentitySyncTimestamp time.Time `json:"last_identity_sync_timestamp"`
-    LastIdentityID            string    `json:"last_identity_id,omitempty"`
-    TotalIdentitiesSynced     int64     `json:"total_identities_synced"`
-    
-    // Balance sync fields
-    LastBalanceSyncTimestamp time.Time `json:"last_balance_sync_timestamp"`
-    LastBalanceID            string    `json:"last_balance_id,omitempty"`
-    TotalBalancesSynced      int64     `json:"total_balances_synced"`
-    
-    // Ledger sync fields
-    LastLedgerSyncTimestamp time.Time `json:"last_ledger_sync_timestamp"`
-    LastLedgerID            string    `json:"last_ledger_id,omitempty"`
-    TotalLedgersSynced      int64     `json:"total_ledgers_synced"`
-    
-    // General sync fields
+    ID                  int       `json:"id"`
+    LastSyncTimestamp   time.Time `json:"last_sync_timestamp"`
+    LastTransactionID   string    `json:"last_transaction_id,omitempty"`
+    TotalSyncedCount    int64     `json:"total_synced_count"`
     LastSyncCompletedAt time.Time `json:"last_sync_completed_at"`
     SyncStatus          string    `json:"sync_status"` // "idle", "running", "failed"
     CreatedAt           time.Time `json:"created_at"`
@@ -439,33 +403,32 @@ func main() {
     // Configure for high-volume system
     config := &watch.SyncConfig{
         SyncInterval: 30 * time.Second,  // Less frequent syncs
-        BatchSize:    5000,               // Larger batches
-        MaxRetries:   10,                  // More retries for reliability
-        RetryDelay:   5 * time.Second,    // Quick retries
+        BatchSize:    5000,              // Larger batches
+        MaxRetries:   10,                // More retries for reliability
+        RetryDelay:   5 * time.Second,   // Quick retries
         EnableSync:   true,
     }
-    
+
     syncer := watch.NewWatermarkSyncer(config)
-    
+
     if err := syncer.Start(); err != nil {
         log.Fatal(err)
     }
     defer syncer.Stop()
-    
+
     // Monitor sync status periodically
     ticker := time.NewTicker(1 * time.Minute)
     defer ticker.Stop()
-    
+
     for range ticker.C {
         status, err := syncer.GetSyncStatus()
         if err != nil {
             log.Printf("Error getting status: %v", err)
             continue
         }
-        
+
         log.Printf("Sync Status: %s", status.SyncStatus)
         log.Printf("Transactions: %d", status.TotalSyncedCount)
-        log.Printf("Identities: %d", status.TotalIdentitiesSynced)
     }
 }
 ```
@@ -484,37 +447,32 @@ import (
 func main() {
     // Start syncing from January 1, 2024
     startDate := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-    
+
     config := &watch.SyncConfig{
-        SyncInterval: 5 * time.Second,
-        BatchSize:    1000,
-        MaxRetries:   3,
-        RetryDelay:   30 * time.Second,
-        EnableSync:   true,
-        
-        // Set all start times to the same date
+        SyncInterval:         5 * time.Second,
+        BatchSize:            1000,
+        MaxRetries:           3,
+        RetryDelay:           30 * time.Second,
+        EnableSync:           true,
         TransactionStartTime: startDate,
-        IdentityStartTime:    startDate,
-        BalanceStartTime:     startDate,
-        LedgerStartTime:      startDate,
     }
-    
+
     syncer := watch.NewWatermarkSyncer(config)
-    
+
     if err := syncer.Start(); err != nil {
         log.Fatal(err)
     }
     defer syncer.Stop()
-    
+
     // Wait for initial sync
     time.Sleep(10 * time.Second)
-    
+
     // Check status
     status, err := syncer.GetSyncStatus()
     if err != nil {
         log.Fatal(err)
     }
-    
+
     log.Printf("Initial sync completed. Synced %d transactions", status.TotalSyncedCount)
 }
 ```
@@ -686,33 +644,13 @@ The watermark state is stored in the `sync_watermark` table:
 ```sql
 CREATE TABLE sync_watermark (
     id INTEGER PRIMARY KEY DEFAULT 1,
-    
-    -- Transaction fields
     last_sync_timestamp TIMESTAMP,
     last_transaction_id VARCHAR,
     total_synced_count BIGINT DEFAULT 0,
-    
-    -- Identity fields
-    last_identity_sync_timestamp TIMESTAMP,
-    last_identity_id VARCHAR,
-    total_identities_synced BIGINT DEFAULT 0,
-    
-    -- Balance fields
-    last_balance_sync_timestamp TIMESTAMP,
-    last_balance_id VARCHAR,
-    total_balances_synced BIGINT DEFAULT 0,
-    
-    -- Ledger fields
-    last_ledger_sync_timestamp TIMESTAMP,
-    last_ledger_id VARCHAR,
-    total_ledgers_synced BIGINT DEFAULT 0,
-    
-    -- General fields
     last_sync_completed_at TIMESTAMP,
     sync_status VARCHAR DEFAULT 'idle',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    
     CHECK (id = 1)
 );
 ```
@@ -723,11 +661,11 @@ CREATE TABLE sync_watermark (
 
 The Watermark Sync system provides:
 
-✅ **Efficient incremental synchronization** from PostgreSQL to DuckDB  
-✅ **Automatic retry logic** for fault tolerance  
-✅ **Configurable sync intervals** and batch sizes  
-✅ **Support for multiple entity types** (transactions, identities, balances, ledgers)  
-✅ **Resumable sync** with watermark tracking  
-✅ **Status monitoring** and debugging capabilities  
+✅ **Efficient incremental synchronization** from PostgreSQL to DuckDB
+✅ **Automatic retry logic** for fault tolerance
+✅ **Configurable sync intervals** and batch sizes
+✅ **Transaction sync** for payment and transaction records
+✅ **Resumable sync** with watermark tracking
+✅ **Status monitoring** and debugging capabilities
 
 Use this system when you need to keep a local DuckDB database synchronized with a remote PostgreSQL database for analytics, reporting, or watch rule evaluation.
