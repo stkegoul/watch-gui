@@ -61,7 +61,10 @@ func handleInject(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	fmt.Fprintf(w, "Transaction %s injected successfully", t.TransactionID)
+	json.NewEncoder(w).Encode(map[string]string{
+		"transaction_id": t.TransactionID,
+		"message":        "Call GET /transactions/{id} to fetch the processed transaction.",
+	})
 }
 
 func handleBlnkWebhook(w http.ResponseWriter, r *http.Request) {
