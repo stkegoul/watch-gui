@@ -1,7 +1,4 @@
-# Blnk Watch
-
 ## Table of Contents
-
 1. [Introduction](#introduction)
 2. [Getting Started](#getting-started)
 3. [Quick Start: Evaluating Transactions](#quick-start-evaluating-transactions)
