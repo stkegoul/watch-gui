@@ -1350,6 +1350,11 @@ func infixToCondition(expr *InfixExpression) (interface{}, error) {
 			return nil, fmt.Errorf("invalid value in condition: %w", err)
 		}
 
+		// Emit "aggregate" type so the interpreter recognizes sum/count (it does not handle "function_comparison").
+		if funcCall.Name == "sum" || funcCall.Name == "count" {
+			return functionCallToAggregateCondition(funcCall, op, value)
+		}
+
 		funcCondition, err := functionToCondition(funcCall)
 		if err != nil {
 			return nil, fmt.Errorf("failed to convert function call: %w", err)
@@ -1383,6 +1388,66 @@ func infixToCondition(expr *InfixExpression) (interface{}, error) {
 		Op:    op,
 		Value: value,
 	}, nil
+}
+
+// functionCallToAggregateCondition converts sum(...) / count(...) comparisons into the
+// "aggregate" condition format that the interpreter expects (it does not handle "function_comparison").
+func functionCallToAggregateCondition(funcCall *FunctionCall, op string, value interface{}) (interface{}, error) {
+	if len(funcCall.Arguments) < 2 {
+		return nil, fmt.Errorf("aggregate function %s requires 2 arguments (conditional, time_window)", funcCall.Name)
+	}
+	condExpr, ok := funcCall.Arguments[0].(*ConditionalExpression)
+	if !ok {
+		return nil, fmt.Errorf("first argument to %s must be a conditional (e.g. amount when source == $current.source)", funcCall.Name)
+	}
+	// sum() requires a value (e.g. amount); count() can be count(when condition, "PT1H") with no value
+	if funcCall.Name == "sum" {
+		if condExpr.Value == nil {
+			return nil, fmt.Errorf("sum() conditional must have a value (e.g. amount when source == $current.source)")
+		}
+		_, err := expressionToFieldPath(condExpr.Value)
+		if err != nil {
+			return nil, fmt.Errorf("sum() value must be a field (e.g. amount): %w", err)
+		}
+	}
+	filterCond, err := expressionToCondition(condExpr.Condition)
+	if err != nil {
+		return nil, fmt.Errorf("aggregate filter condition: %w", err)
+	}
+	filterSimple, ok := filterCond.(SimpleCond)
+	if !ok {
+		return nil, fmt.Errorf("aggregate filter must be a simple comparison (e.g. source == $current.source)")
+	}
+	timeWindowStr, ok := valueToString(funcCall.Arguments[1])
+	if !ok || timeWindowStr == "" {
+		return nil, fmt.Errorf("second argument to %s must be a time window string (e.g. PT1H)", funcCall.Name)
+	}
+	var valueNum float64
+	switch v := value.(type) {
+	case float64:
+		valueNum = v
+	case int:
+		valueNum = float64(v)
+	case int64:
+		valueNum = float64(v)
+	default:
+		return nil, fmt.Errorf("aggregate comparison value must be numeric, got %T", value)
+	}
+	return map[string]interface{}{
+		"type":        "aggregate",
+		"metric":      funcCall.Name,
+		"time_window": timeWindowStr,
+		"op":          op,
+		"value":       valueNum,
+		"filter":      filterSimple,
+	}, nil
+}
+
+func valueToString(expr Expression) (string, bool) {
+	if lit, ok := expr.(*StringLiteral); ok {
+		return lit.Value, true
+	}
+	return "", false
 }
 
 func functionToCondition(expr *FunctionCall) (interface{}, error) {
