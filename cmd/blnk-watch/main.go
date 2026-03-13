@@ -17,10 +17,12 @@ limitations under the License.
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -32,10 +34,10 @@ import (
 
 func main() {
 	var (
-		command      = flag.String("command", "watch", "Command to run: 'watch' (default), 'sync', or 'sync-once'")
+		command      = flag.String("command", "watch", "Command to run: 'start', 'watch' (default), 'sync', or 'sync-once'")
 		envFile      = flag.String("env", ".env", "Path to .env file")
 		port         = flag.String("port", "8081", "Port for watch service HTTP server")
-		syncInterval = flag.Duration("sync-interval", 1*time.Second, "Interval for watermark sync")
+		syncInterval = flag.Duration("sync-interval", 10*time.Second, "Interval for watermark sync")
 		batchSize    = flag.Int("batch-size", 1000, "Batch size for watermark sync")
 	)
 	flag.Parse()
@@ -48,6 +50,8 @@ func main() {
 	zerolog.SetGlobalLevel(zerolog.InfoLevel)
 
 	switch *command {
+	case "start":
+		runStartService(*port, *syncInterval, *batchSize)
 	case "watch":
 		runWatchService(*port)
 	case "sync":
@@ -56,20 +60,46 @@ func main() {
 		runWatermarkSyncOnce(*batchSize)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", *command)
-		fmt.Fprintf(os.Stderr, "Available commands: watch, sync, sync-once\n")
+		fmt.Fprintf(os.Stderr, "Available commands: start, watch, sync, sync-once\n")
 		os.Exit(1)
+	}
+}
+
+func runStartService(port string, syncInterval time.Duration, batchSize int) {
+	zlog.Info().Msg("Starting Blnk Watch Service with Watermark Sync...")
+
+	if hasDBURL() {
+		if err := watch.InitTransactionsDB(); err != nil {
+			zlog.Fatal().Err(err).Msg("Failed to initialize transactions database")
+		}
+		defer watch.CloseTransactionsDB()
+
+		syncer := newSyncer(syncInterval, batchSize)
+		if err := syncer.Start(); err != nil {
+			zlog.Fatal().Err(err).Msg("Failed to start watermark syncer")
+		}
+		defer syncer.Stop()
+	} else {
+		zlog.Warn().Msg("DB_URL is not set; starting watch service without watermark sync")
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	if err := watch.RunWatchService(ctx, port, nil); err != nil {
+		zlog.Fatal().Err(err).Msg("Failed to start watch service")
 	}
 }
 
 func runWatchService(port string) {
 	zlog.Info().Msg("Starting Blnk Watch Service...")
 
-	os.Setenv("PORT", port)
-	if port == "" {
-		port = "8081"
-	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
-	watch.SetupWatchService(nil)
+	if err := watch.RunWatchService(ctx, port, nil); err != nil {
+		zlog.Fatal().Err(err).Msg("Failed to start watch service")
+	}
 }
 
 func runWatermarkSync(syncInterval time.Duration, batchSize int) {
@@ -78,12 +108,9 @@ func runWatermarkSync(syncInterval time.Duration, batchSize int) {
 	if err := watch.InitTransactionsDB(); err != nil {
 		zlog.Fatal().Err(err).Msg("Failed to initialize transactions database")
 	}
+	defer watch.CloseTransactionsDB()
 
-	config := watch.DefaultSyncConfig()
-	config.SyncInterval = syncInterval
-	config.BatchSize = batchSize
-
-	syncer := watch.NewWatermarkSyncer(config)
+	syncer := newSyncer(syncInterval, batchSize)
 
 	if err := syncer.Start(); err != nil {
 		zlog.Fatal().Err(err).Msg("Failed to start watermark syncer")
@@ -109,6 +136,7 @@ func runWatermarkSyncOnce(batchSize int) {
 	if err := watch.InitTransactionsDB(); err != nil {
 		zlog.Fatal().Err(err).Msg("Failed to initialize transactions database")
 	}
+	defer watch.CloseTransactionsDB()
 
 	config := watch.DefaultSyncConfig()
 	config.BatchSize = batchSize
@@ -130,4 +158,15 @@ func runWatermarkSyncOnce(batchSize int) {
 	}
 
 	zlog.Info().Msg("One-time sync completed")
+}
+
+func newSyncer(syncInterval time.Duration, batchSize int) *watch.WatermarkSyncer {
+	config := watch.DefaultSyncConfig()
+	config.SyncInterval = syncInterval
+	config.BatchSize = batchSize
+	return watch.NewWatermarkSyncer(config)
+}
+
+func hasDBURL() bool {
+	return strings.TrimSpace(os.Getenv("DB_URL")) != ""
 }

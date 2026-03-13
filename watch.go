@@ -17,7 +17,9 @@ limitations under the License.
 package watch
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -104,21 +106,32 @@ func SendAnomalyToTunnel(anomaly AnomalyMessage) error {
 }
 
 func SetupWatchService(tunnel interface{}) {
+	if err := RunWatchService(context.Background(), "8081", tunnel); err != nil {
+		zlog.Fatal().Err(err).Msg("Failed to start watch service")
+	}
+}
+
+func RunWatchService(ctx context.Context, port string, tunnel interface{}) error {
 	globalTunnel = tunnel
 	godotenv.Load()
 	zlog.Logger = zlog.Output(zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: time.RFC3339})
-	zerolog.SetGlobalLevel(zerolog.DebugLevel)
 
 	zlog.Info().Msg("Starting Blnk Watch...")
 
 	if err := InitInstructionDB(); err != nil {
-		zlog.Fatal().Err(err).Msg("Failed to initialize Instruction Database. Exiting.")
-		return
+		return fmt.Errorf("failed to initialize instruction database: %w", err)
 	}
 	defer CloseInstructionDB()
 
-	if err := InitTransactionsDB(); err != nil {
-		zlog.Warn().Err(err).Msg("Transactions database initialization skipped (may already be initialized by agent)")
+	initializedTransactionsDB := false
+	if _, err := GetDB(); err != nil {
+		if err := InitTransactionsDB(); err != nil {
+			return fmt.Errorf("failed to initialize transactions database: %w", err)
+		}
+		initializedTransactionsDB = true
+	}
+	if initializedTransactionsDB {
+		defer CloseTransactionsDB()
 	}
 
 	startRiskEvaluationWorker()
@@ -136,8 +149,7 @@ func SetupWatchService(tunnel interface{}) {
 			zlog.Info().Str("repo", gitRepoURL).Msg("Git repository configured for watch scripts")
 
 			if !IsGitInstalled() {
-				zlog.Fatal().Msg("Git is not installed. Please install Git to use Git repository features.")
-				return
+				return fmt.Errorf("git is not installed. please install Git to use Git repository features")
 			}
 
 			gitBranch := os.Getenv("WATCH_SCRIPT_GIT_BRANCH")
@@ -147,16 +159,14 @@ func SetupWatchService(tunnel interface{}) {
 
 			// Validate Git repository URL
 			if err := ValidateGitRepo(gitRepoURL); err != nil {
-				zlog.Fatal().Err(err).Msg("Invalid Git repository URL")
-				return
+				return fmt.Errorf("invalid Git repository URL: %w", err)
 			}
 
 			gitManager := NewGitManager(gitRepoURL, gitBranch, watchScriptDir)
 			globalGitManager = gitManager
 
 			if err := gitManager.CloneOrUpdate(); err != nil {
-				zlog.Fatal().Err(err).Msg("Failed to clone or update Git repository")
-				return
+				return fmt.Errorf("failed to clone or update Git repository: %w", err)
 			}
 
 			go processExistingScriptsInDir(watchScriptDir)
@@ -173,19 +183,44 @@ func SetupWatchService(tunnel interface{}) {
 		}
 	}
 
-	http.HandleFunc("/inject", handleInject)
-	http.HandleFunc("/blnkwebhook", handleBlnkWebhook)
-	http.HandleFunc("/instructions", handleInstructions)
-	http.HandleFunc("/instructions/", handleInstructionByID)
-	http.HandleFunc("/transactions/", handleTransactionByID)
-	http.HandleFunc("/compile-and-save-instruction", handleCompileAndSaveInstruction)
-	http.HandleFunc("/git/status", handleGitStatus)
-	http.HandleFunc("/git/sync", handleGitSync)
-
-	port := "8081"
-	zlog.Info().Msgf("Server listening on port %s", port)
-	err := http.ListenAndServe(":"+port, nil)
-	if err != nil {
-		zlog.Fatal().Err(err).Msg("Failed to start server")
+	if port == "" {
+		port = "8081"
 	}
+
+	server := &http.Server{
+		Addr:    ":" + port,
+		Handler: buildWatchMux(),
+	}
+
+	go func() {
+		<-ctx.Done()
+
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		if err := server.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			zlog.Error().Err(err).Msg("Failed to shut down watch service")
+		}
+	}()
+
+	zlog.Info().Msgf("Server listening on port %s", port)
+	err := server.ListenAndServe()
+	if err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return fmt.Errorf("failed to start server: %w", err)
+	}
+
+	return nil
+}
+
+func buildWatchMux() *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/inject", handleInject)
+	mux.HandleFunc("/blnkwebhook", handleBlnkWebhook)
+	mux.HandleFunc("/instructions", handleInstructions)
+	mux.HandleFunc("/instructions/", handleInstructionByID)
+	mux.HandleFunc("/transactions/", handleTransactionByID)
+	mux.HandleFunc("/compile-and-save-instruction", handleCompileAndSaveInstruction)
+	mux.HandleFunc("/git/status", handleGitStatus)
+	mux.HandleFunc("/git/sync", handleGitSync)
+	return mux
 }

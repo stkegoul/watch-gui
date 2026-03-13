@@ -31,15 +31,25 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-const instructionDBDir = "blnk_agent"
+const instructionDBDir = "blnk_watch_db"
 
-const instructionDBFilename = "instructions.db"
+const instructionDBFilename = "instructions.duckdb"
 
 var instructionDB *sql.DB
 
-const dbDir = "blnk_agent"
+const dbDir = "blnk_watch_db"
 
-const dbFilename = "blnk.db"
+const dbFilename = "blnk.duckdb"
+
+const duckDBTempDir = dbDir + "/duckdb_temp"
+
+const (
+	duckDBAccessMode          = "READ_WRITE"
+	duckDBThreads             = 1
+	duckDBMemoryLimit         = "2GiB"
+	duckDBCheckpointThreshold = "64MiB"
+	duckDBConnMaxLifetime     = 10 * time.Minute
+)
 
 var (
 	transactionsDB *sql.DB
@@ -172,67 +182,6 @@ func ensureSchema(db *sql.DB) error {
 		log.Error().Err(err).Msg("Failed to create transactions table")
 		return fmt.Errorf("failed to create transactions table: %w", err)
 	}
-
-	identityQuery := `
-	CREATE TABLE IF NOT EXISTS identity (
-		identity_id VARCHAR NOT NULL,
-		first_name VARCHAR,
-		last_name VARCHAR,
-		organization_name VARCHAR,
-		email_address VARCHAR,
-		identity_type VARCHAR,
-		country VARCHAR,
-		dob VARCHAR,
-		created_at TIMESTAMP,
-		metadata JSON,
-		PRIMARY KEY (identity_id)
-	);
-	`
-	_, err = db.Exec(identityQuery)
-	if err != nil {
-		log.Error().Err(err).Msg("Failed to create identity table")
-		return fmt.Errorf("failed to create identity table: %w", err)
-	}
-
-	ledgersQuery := `
-	CREATE TABLE IF NOT EXISTS ledgers (
-		ledger_id VARCHAR NOT NULL,
-		name VARCHAR,
-		created_at TIMESTAMP,
-		metadata JSON,
-		PRIMARY KEY (ledger_id)
-	);
-	`
-	_, err = db.Exec(ledgersQuery)
-	if err != nil {
-		log.Error().Err(err).Msg("Failed to create ledgers table")
-		return fmt.Errorf("failed to create ledgers table: %w", err)
-	}
-
-	balancesQuery := `
-	CREATE TABLE IF NOT EXISTS balances (
-		balance_id VARCHAR NOT NULL,
-		ledger_id VARCHAR,
-		identity_id VARCHAR,
-		currency VARCHAR,
-		balance DOUBLE,
-		inflight_balance DOUBLE,
-		credit_balance DOUBLE,
-		debit_balance DOUBLE,
-		inflight_credit_balance DOUBLE,
-		inflight_debit_balance DOUBLE,
-		indicator VARCHAR,
-		created_at TIMESTAMP,
-		metadata JSON,
-		PRIMARY KEY (balance_id)
-	);
-	`
-	_, err = db.Exec(balancesQuery)
-	if err != nil {
-		log.Error().Err(err).Msg("Failed to create balances table")
-		return fmt.Errorf("failed to create balances table: %w", err)
-	}
-
 	watermarkQuery := `
 	CREATE TABLE IF NOT EXISTS sync_watermark (
 		id INTEGER PRIMARY KEY DEFAULT 1,
@@ -240,18 +189,6 @@ func ensureSchema(db *sql.DB) error {
 		last_sync_timestamp TIMESTAMP,
 		last_transaction_id VARCHAR,
 		total_synced_count BIGINT DEFAULT 0,
-		-- Identities watermark
-		last_identity_sync_timestamp TIMESTAMP,
-		last_identity_id VARCHAR,
-		total_identities_synced BIGINT DEFAULT 0,
-		-- Balances watermark
-		last_balance_sync_timestamp TIMESTAMP,
-		last_balance_id VARCHAR,
-		total_balances_synced BIGINT DEFAULT 0,
-		-- Ledgers watermark
-		last_ledger_sync_timestamp TIMESTAMP,
-		last_ledger_id VARCHAR,
-		total_ledgers_synced BIGINT DEFAULT 0,
 		-- General sync info
 		last_sync_completed_at TIMESTAMP,
 		sync_status VARCHAR DEFAULT 'idle',
@@ -270,14 +207,11 @@ func ensureSchema(db *sql.DB) error {
 	INSERT OR IGNORE INTO sync_watermark (
 		id, 
 		last_sync_timestamp, 
-		last_identity_sync_timestamp,
-		last_balance_sync_timestamp,
-		last_ledger_sync_timestamp,
 		sync_status
 	) 
-	VALUES (1, '1970-01-01 00:00:00', '1970-01-01 00:00:00', '1970-01-01 00:00:00', '1970-01-01 00:00:00', 'idle');
+	VALUES (1, ?, 'idle');
 	`
-	_, err = db.Exec(initWatermarkQuery)
+	_, err = db.Exec(initWatermarkQuery, defaultInitialSyncTimestamp())
 	if err != nil {
 		log.Error().Err(err).Msg("Failed to initialize sync watermark")
 		return fmt.Errorf("failed to initialize sync watermark: %w", err)
@@ -303,111 +237,25 @@ func ensureSchema(db *sql.DB) error {
 		log.Error().Err(err).Msg("Failed to create index on timestamp")
 		return fmt.Errorf("failed to create index on timestamp: %w", err)
 	}
-
-	identityCreatedAtIndexQuery := `CREATE INDEX IF NOT EXISTS idx_identity_created_at ON identity (created_at);`
-	_, err = db.Exec(identityCreatedAtIndexQuery)
-	if err != nil {
-		log.Error().Err(err).Msg("Failed to create index on identity created_at")
-		return fmt.Errorf("failed to create index on identity created_at: %w", err)
-	}
-
-	identityTypeIndexQuery := `CREATE INDEX IF NOT EXISTS idx_identity_type ON identity (identity_type);`
-	_, err = db.Exec(identityTypeIndexQuery)
-	if err != nil {
-		log.Error().Err(err).Msg("Failed to create index on identity type")
-		return fmt.Errorf("failed to create index on identity type: %w", err)
-	}
-
-	ledgerCreatedAtIndexQuery := `CREATE INDEX IF NOT EXISTS idx_ledgers_created_at ON ledgers (created_at);`
-	_, err = db.Exec(ledgerCreatedAtIndexQuery)
-	if err != nil {
-		log.Error().Err(err).Msg("Failed to create index on ledgers created_at")
-		return fmt.Errorf("failed to create index on ledgers created_at: %w", err)
-	}
-
-	ledgerNameIndexQuery := `CREATE INDEX IF NOT EXISTS idx_ledgers_name ON ledgers (name);`
-	_, err = db.Exec(ledgerNameIndexQuery)
-	if err != nil {
-		log.Error().Err(err).Msg("Failed to create index on ledgers name")
-		return fmt.Errorf("failed to create index on ledgers name: %w", err)
-	}
-
-	balanceIdentityIndexQuery := `CREATE INDEX IF NOT EXISTS idx_balances_identity_id ON balances (identity_id);`
-	_, err = db.Exec(balanceIdentityIndexQuery)
-	if err != nil {
-		log.Error().Err(err).Msg("Failed to create index on balances identity_id")
-		return fmt.Errorf("failed to create index on balances identity_id: %w", err)
-	}
-
-	balanceLedgerIndexQuery := `CREATE INDEX IF NOT EXISTS idx_balances_ledger_id ON balances (ledger_id);`
-	_, err = db.Exec(balanceLedgerIndexQuery)
-	if err != nil {
-		log.Error().Err(err).Msg("Failed to create index on balances ledger_id")
-		return fmt.Errorf("failed to create index on balances ledger_id: %w", err)
-	}
-
-	balanceCreatedAtIndexQuery := `CREATE INDEX IF NOT EXISTS idx_balances_created_at ON balances (created_at);`
-	_, err = db.Exec(balanceCreatedAtIndexQuery)
-	if err != nil {
-		log.Error().Err(err).Msg("Failed to create index on balances created_at")
-		return fmt.Errorf("failed to create index on balances created_at: %w", err)
-	}
-
-	balanceCurrencyIndexQuery := `CREATE INDEX IF NOT EXISTS idx_balances_currency ON balances (currency);`
-	_, err = db.Exec(balanceCurrencyIndexQuery)
-	if err != nil {
-		log.Error().Err(err).Msg("Failed to create index on balances currency")
-		return fmt.Errorf("failed to create index on balances currency: %w", err)
-	}
-
 	return nil
 }
 
 func InitTransactionsDB() error {
+	dbMutex.RLock()
+	if transactionsDB != nil {
+		dbMutex.RUnlock()
+		return nil
+	}
+	dbMutex.RUnlock()
+
 	dbPath, err := getDBPath()
 	if err != nil {
 		return fmt.Errorf("failed to get transactions database path: %w", err)
 	}
 
-	connStr := fmt.Sprintf("%s?access_mode=READ_WRITE&threads=1&memory_limit=2GiB&checkpoint_threshold=64MiB", dbPath)
-	db, err := sql.Open("duckdb", connStr)
+	db, err := openTransactionsDBConnection(dbPath)
 	if err != nil {
-		log.Error().Err(err).Str("db_path", dbPath).Msg("Error opening database for transactions")
-		return err
-	}
-
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
-	db.SetConnMaxLifetime(10 * time.Minute)
-
-	if err = db.Ping(); err != nil {
-		log.Error().Err(err).Str("db_path", dbPath).Msg("Failed to ping transactions database")
-		db.Close()
-		return err
-	}
-
-	pragmas := []string{
-		"SET memory_limit='2GiB'",
-		"SET temp_directory='blnk_agent/duckdb_temp'",
-		"SET threads=1",
-		"SET checkpoint_threshold='64MiB'",
-		"SET enable_progress_bar=false",
-		"SET preserve_insertion_order=false",
-		"SET null_order='nulls_first'",
-	}
-
-	for _, pragma := range pragmas {
-		if _, err := db.Exec(pragma); err != nil {
-			log.Error().Err(err).Str("pragma", pragma).Msg("Failed to set DuckDB pragma")
-			db.Close()
-			return fmt.Errorf("failed to set pragma %s: %w", pragma, err)
-		}
-	}
-
-	if err := os.MkdirAll("blnk_agent/duckdb_temp", 0755); err != nil {
-		log.Error().Err(err).Msg("Failed to create DuckDB temp directory")
-		db.Close()
-		return fmt.Errorf("failed to create temp directory: %w", err)
+		return fmt.Errorf("failed to open transactions database: %w", err)
 	}
 
 	if err := ensureSchema(db); err != nil {
@@ -455,6 +303,60 @@ func getDB() (*sql.DB, error) {
 func GetDB() (*sql.DB, error) {
 	return getDB()
 }
+
+func getSyncDB() (*sql.DB, error) {
+	return getDB()
+}
+
+func GetSyncDB() (*sql.DB, error) {
+	return getSyncDB()
+}
+
+func openTransactionsDBConnection(dbPath string) (*sql.DB, error) {
+	connStr := fmt.Sprintf("%s", dbPath)
+	db, err := sql.Open("duckdb", connStr)
+	if err != nil {
+		log.Error().Err(err).Str("db_path", dbPath).Msg("Error opening database for transactions")
+		return nil, err
+	}
+
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	db.SetConnMaxLifetime(duckDBConnMaxLifetime)
+
+	if err = db.Ping(); err != nil {
+		log.Error().Err(err).Str("db_path", dbPath).Msg("Failed to ping transactions database")
+		db.Close()
+		return nil, err
+	}
+
+	if err := os.MkdirAll(duckDBTempDir, 0755); err != nil {
+		log.Error().Err(err).Msg("Failed to create DuckDB temp directory")
+		db.Close()
+		return nil, fmt.Errorf("failed to create temp directory: %w", err)
+	}
+
+	pragmas := []string{
+		fmt.Sprintf("SET memory_limit='%s'", duckDBMemoryLimit),
+		fmt.Sprintf("SET temp_directory='%s'", duckDBTempDir),
+		fmt.Sprintf("SET threads=%d", duckDBThreads),
+		fmt.Sprintf("SET checkpoint_threshold='%s'", duckDBCheckpointThreshold),
+		"SET enable_progress_bar=false",
+		"SET preserve_insertion_order=false",
+		"SET null_order='nulls_first'",
+	}
+
+	for _, pragma := range pragmas {
+		if _, err := db.Exec(pragma); err != nil {
+			log.Error().Err(err).Str("pragma", pragma).Msg("Failed to set DuckDB pragma")
+			db.Close()
+			return nil, fmt.Errorf("failed to set pragma %s: %w", pragma, err)
+		}
+	}
+
+	return db, nil
+}
+
 func updateTransactionMetadataInDB(txID string, metadata map[string]interface{}) error {
 
 	db, err := getDB()

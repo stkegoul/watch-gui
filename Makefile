@@ -1,4 +1,4 @@
-.PHONY: build watch sync sync-once help clean install
+.PHONY: build start watch sync sync-once help clean install
 
 BINARY_NAME=blnk-watch
 CMD_DIR=cmd/blnk-watch
@@ -17,6 +17,9 @@ build: ## Build the blnk-watch binary
 install: build ## Build and install to GOPATH/bin
 	@go install ./$(CMD_DIR)
 	@echo "Installed to $$(go env GOPATH)/bin/$(BINARY_NAME)"
+
+start: build ## Run watch service and watermark sync in one process
+	@./$(BINARY_NAME) -command=start
 
 watch: build ## Run the watch service (default command)
 	@./$(BINARY_NAME) -command=watch

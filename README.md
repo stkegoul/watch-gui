@@ -53,6 +53,21 @@ cd cmd/blnk-watch && go build -o ../../blnk-watch .
 
 ### Running
 
+#### Start Service
+
+Starts the watch HTTP service and the watermark syncer in the same process so both share the same DuckDB connection:
+
+```bash
+# Using the binary
+./blnk-watch -command=start
+
+# Or using make
+make start
+
+# With custom port, sync interval, and batch size
+./blnk-watch -command=start -port=9090 -sync-interval=5s -batch-size=500
+```
+
 #### Watch Service (Default)
 
 Starts the main watch service with HTTP API on port 8081:
@@ -105,7 +120,7 @@ make sync-once
 
 | Flag | Description | Default | Commands |
 |------|-------------|---------|----------|
-| `-command` | Command to run: `watch`, `sync`, or `sync-once` | `watch` | All |
+| `-command` | Command to run: `start`, `watch`, `sync`, or `sync-once` | `watch` | All |
 | `-env` | Path to .env file | `.env` | All |
 | `-port` | Port for watch service HTTP server | `8081` | `watch` |
 | `-sync-interval` | Interval for watermark sync | `1s` | `sync` |
@@ -116,6 +131,8 @@ make sync-once
 Configure your `.env` file (see `env.example`) with:
 
 - `DB_URL`: PostgreSQL connection URL
+- `SYNC_TRANSACTION_LOOKBACK`: Initial transaction sync lookback window for a new or untouched watermark (default: `48h`)
+- `SYNC_TRANSACTION_START_TIME`: Optional absolute initial transaction sync start time override
 - `WATCH_SCRIPT_DIR`: Directory for watch scripts (default: `watch_scripts`)
 - `WATCH_SCRIPT_GIT_REPO`: Optional Git repository URL for watch scripts
 - `WATCH_SCRIPT_GIT_BRANCH`: Git branch to use (default: `main`)
@@ -127,6 +144,7 @@ Configure your `.env` file (see `env.example`) with:
 |--------|-------------|
 | `make build` | Build the binary |
 | `make install` | Build and install to GOPATH/bin |
+| `make start` | Run watch and sync in one process |
 | `make watch` | Run the watch service |
 | `make sync` | Run continuous watermark sync |
 | `make sync-once` | Run one-time watermark sync |

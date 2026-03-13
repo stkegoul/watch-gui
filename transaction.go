@@ -119,6 +119,11 @@ func evaluateTransaction(t Transaction) (Transaction, error) {
 		t.MetaData = make(map[string]interface{})
 	}
 
+	db, err := getDB()
+	if err != nil {
+		return t, fmt.Errorf("failed to get database connection: %w", err)
+	}
+
 	activeRules, err := getActiveRules()
 	if err != nil {
 		fmt.Printf("failed to get active rules: %+v\n", err)
@@ -135,7 +140,7 @@ func evaluateTransaction(t Transaction) (Transaction, error) {
 		"meta_data":      t.MetaData,
 	}
 
-	aggCtx, err := BuildAggContext(context.Background(), transactionsDB, transactionMap, activeRules)
+	aggCtx, err := BuildAggContext(context.Background(), db, transactionMap, activeRules)
 	if err != nil {
 		return t, fmt.Errorf("failed to build aggregate context: %w", err)
 	}
@@ -199,9 +204,9 @@ func fetchUnprocessedTransactions(limit int) ([]Transaction, error) {
 		t.CreatedAt = timestamp
 
 		if metadataRaw != nil {
-		switch v := metadataRaw.(type) {
-		case string:
-			if v != "" {
+			switch v := metadataRaw.(type) {
+			case string:
+				if v != "" {
 					err = json.Unmarshal([]byte(v), &t.MetaData)
 					if err != nil {
 						log.Warn().
@@ -395,7 +400,7 @@ func CopyTransactionsFromPostgreSQL(limit int) error {
 	}
 
 	// Get DuckDB connection
-	db, err := getDB()
+	db, err := getSyncDB()
 	if err != nil {
 		return fmt.Errorf("failed to get DuckDB connection: %w", err)
 	}
@@ -463,7 +468,7 @@ func CopyAllTransactionsFromPostgreSQL() error {
 	}
 
 	// Get DuckDB connection
-	db, err := getDB()
+	db, err := getSyncDB()
 	if err != nil {
 		return fmt.Errorf("failed to get DuckDB connection: %w", err)
 	}

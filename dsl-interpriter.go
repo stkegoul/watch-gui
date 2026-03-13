@@ -436,6 +436,11 @@ func evalTimeFunction(tx map[string]any, c TimeFunctionCond) (bool, error) {
 }
 
 func evalPreviousTransaction(tx map[string]any, pc PreviousTransactionCond) (bool, error) {
+	db, err := getDB()
+	if err != nil {
+		return false, fmt.Errorf("failed to get database connection: %w", err)
+	}
+
 	dur, err := parseISODuration(pc.TimeWindow)
 	if err != nil {
 		return false, err
@@ -469,7 +474,7 @@ func evalPreviousTransaction(tx map[string]any, pc PreviousTransactionCond) (boo
 	`, strings.Join(conditions, " AND "))
 
 	var count int
-	err = transactionsDB.QueryRow(query, args...).Scan(&count)
+	err = db.QueryRow(query, args...).Scan(&count)
 	if err != nil {
 		return false, err
 	}
