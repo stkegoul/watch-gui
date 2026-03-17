@@ -32,6 +32,12 @@ import (
 	"watch"
 )
 
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+)
+
 func main() {
 	var (
 		command      = flag.String("command", "watch", "Command to run: 'start', 'watch' (default), 'sync', or 'sync-once'")
@@ -39,8 +45,14 @@ func main() {
 		port         = flag.String("port", "8081", "Port for watch service HTTP server")
 		syncInterval = flag.Duration("sync-interval", 10*time.Second, "Interval for watermark sync")
 		batchSize    = flag.Int("batch-size", 1000, "Batch size for watermark sync")
+		showVersion  = flag.Bool("version", false, "Print version information and exit")
 	)
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Printf("blnk-watch version %s (commit %s, built %s)\n", version, commit, date)
+		return
+	}
 
 	if err := godotenv.Load(*envFile); err != nil {
 		zlog.Warn().Err(err).Msg("Failed to load .env file, using environment variables")
