@@ -2,6 +2,10 @@
 
 BINARY_NAME=blnk-watch
 CMD_DIR=cmd/blnk-watch
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
+DATE ?= $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
+LDFLAGS = -s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(DATE)
 
 help: ## Show this help message
 	@echo 'Usage: make [target]'
@@ -11,11 +15,11 @@ help: ## Show this help message
 
 build: ## Build the blnk-watch binary
 	@echo "Building $(BINARY_NAME)..."
-	@cd $(CMD_DIR) && go build -o ../../$(BINARY_NAME) .
+	@cd $(CMD_DIR) && go build -ldflags "$(LDFLAGS)" -o ../../$(BINARY_NAME) .
 	@echo "Build complete: ./$(BINARY_NAME)"
 
 install: build ## Build and install to GOPATH/bin
-	@go install ./$(CMD_DIR)
+	@go install -ldflags "$(LDFLAGS)" ./$(CMD_DIR)
 	@echo "Installed to $$(go env GOPATH)/bin/$(BINARY_NAME)"
 
 start: build ## Run watch service and watermark sync in one process

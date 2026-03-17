@@ -32,6 +32,22 @@ A Watch script is declarative: you describe *what* to detect and *what action to
 
 ## Getting Started
 
+### Install a Release Binary
+
+Once you start publishing tagged releases, users can install the latest macOS or Linux binary with:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/blnkfinance/watch/main/scripts/install.sh | bash
+```
+
+You can also pin a specific release:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/blnkfinance/watch/main/scripts/install.sh | bash -s -- v0.1.0
+```
+
+The installer places `blnk-watch` in `~/.local/bin` by default. The release workflow currently publishes native macOS (`amd64`, `arm64`) and Linux (`amd64`) binaries; for other platforms, keep the source build path until you verify the CGO toolchain for DuckDB/SQLite on that runner.
+
 ### Building
 
 #### Using Make (Recommended)
@@ -125,6 +141,7 @@ make sync-once
 | `-port` | Port for watch service HTTP server | `8081` | `watch` |
 | `-sync-interval` | Interval for watermark sync | `1s` | `sync` |
 | `-batch-size` | Batch size for watermark sync | `1000` | `sync`, `sync-once` |
+| `-version` | Print build version metadata and exit | `false` | All |
 
 ### Environment Variables
 
