@@ -5,6 +5,9 @@ on:
     tags:
       - "v*"
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 permissions:
   contents: write
 
@@ -16,11 +19,6 @@ jobs:
         include:
           - runner: ubuntu-latest
             goos: linux
-            goarch: amd64
-            archive_ext: tar.gz
-            binary_name: blnk-watch
-          - runner: macos-13
-            goos: darwin
             goarch: amd64
             archive_ext: tar.gz
             binary_name: blnk-watch
