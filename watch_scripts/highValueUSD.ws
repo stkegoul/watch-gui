@@ -1,4 +1,4 @@
-rule highValueUSD.ws {
+rule highValueUSD {
   when amount >= 5000
     and currency == "USD"
 
